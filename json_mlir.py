@@ -28,8 +28,11 @@ class genModel():
         self.code.append(string)
 
     def emitC(self):
+        self.exec_code.insert(0, "uint64_t start_time, end_time;\n")
+        self.exec_code.insert(1, "start_time = shl_get_timespec();\n")
         self.code += self.exec_code
-        self.addCode(r'printf("Run graph completed.\n");' + '\n')
+        self.addCode("end_time = shl_get_timespec();\n")
+        self.addCode(r'printf("Run graph execution time: %.5fms, FPS=%.2f\n", ((float)(end_time - start_time)) / 1000000, 1000000000.0 / ((float)(end_time - start_time)));' + '\n')
         self.addCode("return 0;\n")
         self.code = ["\t" + line for line in self.code]
         self.code.insert(0, "#include <shl_ref.h>\n\nint main(int argc, char **argv)\n{\n")

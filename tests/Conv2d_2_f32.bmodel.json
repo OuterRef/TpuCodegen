@@ -1,0 +1,55 @@
+[
+  {
+    "file-line": 12,
+    "subnet_id": 0,
+    "opcode": "tpu.Conv2D",
+    "bdc_gdma_id(before)": [
+      0,
+      0
+    ],
+    "bdc_gdma_id(after)": [
+      8,
+      18
+    ],
+    "operands": [
+      {
+        "address": 4295012352,
+        "layout": "continuous",
+        "memory_type": "<4x16x100x100xf32>",
+        "name": "input",
+        "reshape": "",
+        "slice": "[...]",
+        "type": "tensor<4x16x100x100xf32, 4295012352 : i64>"
+      },
+      {
+        "address": 4294967296,
+        "layout": "continuous",
+        "memory_type": "<1x65x16x9xf32>",
+        "name": "weight",
+        "reshape": "",
+        "slice": "[...]",
+        "type": "tensor<1x65x16x9xf32, 4294967296 : i64>"
+      },
+      {
+        "address": 4295008256,
+        "layout": "continuous",
+        "memory_type": "<1x65x1x1xf32>",
+        "name": "bias",
+        "reshape": "",
+        "slice": "[...]",
+        "type": "tensor<1x65x1x1xf32, 4295008256 : i64>"
+      }
+    ],
+    "results": [
+      {
+        "address": 4297572352,
+        "layout": "continuous",
+        "memory_type": "<4x65x100x100xf32>",
+        "name": "output_Conv",
+        "reshape": "",
+        "slice": "[...]",
+        "type": "tensor<4x65x100x100xf32, 4297572352 : i64>"
+      }
+    ]
+  }
+]

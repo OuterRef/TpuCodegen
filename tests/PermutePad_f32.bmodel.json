@@ -1,0 +1,75 @@
+[
+  {
+    "file-line": 11,
+    "subnet_id": 0,
+    "opcode": "tpu.Pad",
+    "bdc_gdma_id(before)": [
+      0,
+      0
+    ],
+    "bdc_gdma_id(after)": [
+      0,
+      5
+    ],
+    "operands": [
+      {
+        "address": 4294967296,
+        "layout": "continuous",
+        "memory_type": "<1x10x20x30x40xf32>",
+        "name": "in_0",
+        "reshape": "",
+        "slice": "[...]",
+        "type": "tensor<1x10x20x30x40xf32, 4294967296 : i64>"
+      },
+      {},
+      {}
+    ],
+    "results": [
+      {
+        "address": 4295929856,
+        "layout": "continuous",
+        "memory_type": "<1x10x20x32x42xf32>",
+        "name": "in_0_pad",
+        "reshape": "",
+        "slice": "[...]",
+        "type": "tensor<1x10x20x32x42xf32, 4295929856 : i64>"
+      }
+    ]
+  },
+  {
+    "file-line": 12,
+    "subnet_id": 0,
+    "opcode": "tpu.Permute",
+    "bdc_gdma_id(before)": [
+      0,
+      5
+    ],
+    "bdc_gdma_id(after)": [
+      1,
+      7
+    ],
+    "operands": [
+      {
+        "address": 4295929856,
+        "layout": "continuous",
+        "memory_type": "<1x10x20x32x42xf32>",
+        "name": "in_0_pad",
+        "reshape": "",
+        "slice": "[...]",
+        "type": "tensor<1x10x20x32x42xf32, 4295929856 : i64>"
+      },
+      {}
+    ],
+    "results": [
+      {
+        "address": 4297007104,
+        "layout": "continuous",
+        "memory_type": "<1x10x32x42x20xf32>",
+        "name": "25_Pad",
+        "reshape": "",
+        "slice": "[...]",
+        "type": "tensor<1x10x32x42x20xf32, 4297007104 : i64>"
+      }
+    ]
+  }
+]

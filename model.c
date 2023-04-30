@@ -62,7 +62,10 @@ int main(int argc, char **argv)
 	output_Conv->dtype = CSINN_DTYPE_FLOAT32;
 	output_Conv->data = malloc(4 * 65 * 100 * 100 * sizeof(float));
 	csinn_conv2d_init(input, output_Conv, weight, bias, line_12_param);
+	uint64_t start_time, end_time;
+	start_time = shl_get_timespec();
 	csinn_conv2d(input, output_Conv, weight, bias, line_12_param);
-	printf("Run graph completed.\n");
+	end_time = shl_get_timespec();
+	printf("Run graph execution time: %.5fms, FPS=%.2f\n", ((float)(end_time - start_time)) / 1000000, 1000000000.0 / ((float)(end_time - start_time)));
 	return 0;
 }
