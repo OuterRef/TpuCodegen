@@ -1,11 +1,71 @@
 import json
 import argparse
+from typing import List
+
+
+####################################
+####       Data Structure       ####
+####################################
+class csinnTensor():
+    def __init__(self, name: str, shape: List[int], layout: str, is_const: int,
+                 quant_channel: int, dtype: str, **kwargs) -> None:
+        self.name = name
+        self.shape = [str(dim) for dim in shape]
+        self.dim_count = str(len(self.shape))
+        self.layout = layout
+        self.is_const = str(is_const)
+        self.quant_channel = str(quant_channel)
+        self.dtype = dtype
+        # TODO: real data
+        self.data = f"malloc({' * '.join(self.shape)} * sizeof(float))"
+        self.additional = kwargs
+
+    def getDefinitionLine(self) -> str:
+        return f"struct csinn_tensor *{self.name} = csinn_alloc_tensor(sess);\n"
+
+    def getAttributeLines(self) -> List[str]:
+        lines = []
+        for i in range(len(self.shape)):
+            lines.append(f"{self.name}->dim[{i}] = {self.shape[i]}")
+        for k, v in self.__dict__.items():
+            if k == 'name' or k == 'shape':
+                continue
+            elif k == 'additional':
+                for ad_k, ad_v in v.items():
+                    lines.append(f"{self.name}->{ad_k} = {ad_v}")
+            else:
+                lines.append(f"{self.name}->{k} = {v}")
+        lines = [line + ";\n" for line in lines]
+        return lines
+    
+
+class csinnParam():
+    def __init__(self, param_type: str, name: str, **kwargs) -> None:
+        self.param_type = param_type
+        self.name = name
+        self.attr = kwargs
+    
+    def getDefinitionLine(self):
+        return f"struct {self.param_type} *{self.name} = csinn_alloc_params(sizeof(struct {self.param_type}), sess);\n"
+    
+    def getAttributeLines(self) -> List[str]:
+        lines = []
+        for k, v in self.attr.items():
+            if type(v) is list:
+                lines.append(f"int {k}[{len(v)}] = {{{', '.join([str(item) for item in v])}}}")
+                lines.append(f"{self.name}->{k} = {k}")
+            else:
+                lines.append(f"{self.name}->{k} = {v}")
+        lines = [line + ";\n" for line in lines]
+        return lines
+
 
 class genModel():
     def __init__(self, json_file):
         self.json_file = json_file
         self.code = []       # code lines for definitions
         self.exec_code = []  # code lines for graph execution
+        self.value_list = [] # values that have been defined
         self.opcode_table = None
         self.run()
 
@@ -17,26 +77,26 @@ class genModel():
 
     def genSession(self):
         ''' Init session '''
-        self.addCode("struct csinn_session *sess = csinn_alloc_session();\n")
-        self.addCode("sess->base_run_mode = CSINN_RM_LAYER;\n")
+        self.code.append("struct csinn_session *sess = csinn_alloc_session();\n")
+        self.code.append("sess->base_run_mode = CSINN_RM_LAYER;\n")
     
     def genOpCode(self, op):
         opcode = op["opcode"]
-        self.opcode_table[opcode](op)
-
-    def addCode(self, string: str):
-        self.code.append(string)
+        try:
+            self.opcode_table[opcode](op)
+        except KeyError as e:
+            print(f"[Warning] {e} is not implemented, ignoring...")
 
     def emitC(self):
         self.exec_code.insert(0, "uint64_t start_time, end_time;\n")
         self.exec_code.insert(1, "start_time = shl_get_timespec();\n")
         self.code += self.exec_code
-        self.addCode("end_time = shl_get_timespec();\n")
-        self.addCode(r'printf("Run graph execution time: %.5fms, FPS=%.2f\n", ((float)(end_time - start_time)) / 1000000, 1000000000.0 / ((float)(end_time - start_time)));' + '\n')
-        self.addCode("return 0;\n")
+        self.code.append("end_time = shl_get_timespec();\n")
+        self.code.append(r'printf("Run graph execution time: %.5fms, FPS=%.2f\n", ((float)(end_time - start_time)) / 1000000, 1000000000.0 / ((float)(end_time - start_time)));' + '\n')
+        self.code.append("return 0;\n")
         self.code = ["\t" + line for line in self.code]
         self.code.insert(0, "#include <shl_ref.h>\n\nint main(int argc, char **argv)\n{\n")
-        self.addCode("}\n")
+        self.code.append("}\n")
         with open("model.c", "w") as f:
             for line in self.code:
                 f.write(line)
@@ -44,62 +104,127 @@ class genModel():
     def opCodeTable(self) -> dict:
         ''' opcode : genCodeMethod '''
         return {
-            "tpu.Conv2D" : self.Conv2D,
+            "tpu.Conv2D" : self.conv2D,
+            "tpu.Permute": self.transpose,
+            "tpu.Pad"    : self.pad,
         }
     
     ####################################
     ####         Operations         ####
     ####################################
-    def Conv2D(self, op):
+    def conv2D(self, op):
+        # params
         params = op["attributes"]
         param_name = "line_" + str(op["file-line"]) + "_param"
+        conv2d_param = csinnParam("csinn_conv2d_params",
+                                  param_name,
+                                  stride_height=params["strides"][0],
+                                  stride_width=params["strides"][1],
+                                  pad_left=params["pads"][0],
+                                  pad_right=params["pads"][1],
+                                  pad_top=params["pads"][2],
+                                  pad_down=params["pads"][3],
+                                  dilation_width=params["dilations"][0],
+                                  dilation_height=params["dilations"][1],
+                                  group=1)
+        self.code.append(conv2d_param.getDefinitionLine())
+        self.code += conv2d_param.getAttributeLines()
+        self.code.append(f'{param_name}->base.layout = CSINN_LAYOUT_NCHW;\n')
+        self.code.append(f'{param_name}->conv_extra.fuse_zp2bias = false;\n')
+        self.code.append(f'{param_name}->base.api = CSINN_C906;\n')
+        
+        # values
         operands = op["operands"]
         results = op["results"]
-        self.addCode(f"struct csinn_conv2d_params *{param_name} = csinn_alloc_params(sizeof(struct csinn_conv2d_params), sess);\n")
-        self.addCode(f'{param_name}->stride_height = {params["strides"][0]};\n')
-        self.addCode(f'{param_name}->stride_width = {params["strides"][1]};\n')
-        self.addCode(f'{param_name}->pad_left = {params["pads"][0]};\n')
-        self.addCode(f'{param_name}->pad_right = {params["pads"][1]};\n')
-        self.addCode(f'{param_name}->pad_top = {params["pads"][2]};\n')
-        self.addCode(f'{param_name}->pad_down = {params["pads"][3]};\n')
-        self.addCode(f'{param_name}->dilation_width = {params["dilations"][0]};\n')
-        self.addCode(f'{param_name}->dilation_height = {params["dilations"][1]};\n')
-        self.addCode(f'{param_name}->base.layout = CSINN_LAYOUT_NCHW;\n')
-        self.addCode(f'{param_name}->group = 1;\n')
-        self.addCode(f'{param_name}->conv_extra.fuse_zp2bias = false;\n')
-        self.addCode(f'{param_name}->base.api = CSINN_C906;\n')
-        
         names = []
         for idx, value in enumerate(operands+results):
-            name = value["name"]
+            if not value:
+                continue
+            name = "value_" + value["name"]
             names.append(name)
+            if name in self.value_list:
+                continue
+            self.value_list.append(name)
             shape = getShapeFromType(value["type"])
-            n_dim = len(shape)
-            self.addCode(f"struct csinn_tensor *{name} = csinn_alloc_tensor(sess);\n")
             if idx == 1:
-                # weight shape adjustment
-                kernel_size = params["kernel_shape"]
-                self.addCode(f"{name}->dim[0] = {shape[1]};\n")
-                self.addCode(f"{name}->dim[1] = {shape[2]};\n")
-                self.addCode(f"{name}->dim[2] = {kernel_size[0]};\n")
-                self.addCode(f"{name}->dim[3] = {kernel_size[1]};\n")
-            else:
-                for i in range(n_dim):
-                    self.addCode(f"{name}->dim[{i}] = {shape[i]};\n")
-            self.addCode(f"{name}->dim_count = {n_dim};\n")
-            self.addCode(f"{name}->layout = CSINN_LAYOUT_NCHW;\n")
-            self.addCode(f"{name}->is_const = 0;\n")
-            self.addCode(f"{name}->quant_channel = 1;\n")
-            self.addCode(f"{name}->dtype = CSINN_DTYPE_FLOAT32;\n")
-            # TODO: random initialize, replace with real data in the future
-            self.addCode(f"{name}->data = malloc({' * '.join([str(dim) for dim in shape])} * sizeof(float));\n")
-
+                shape = [shape[1], shape[2], params["kernel_shape"][0], params["kernel_shape"][1]]
+            value_tensor = csinnTensor(name, shape, "CSINN_LAYOUT_NCHW", 0, 1, "CSINN_DTYPE_FLOAT32")
+            self.code.append(value_tensor.getDefinitionLine())
+            self.code += value_tensor.getAttributeLines()
         name_series = f"{names[0]}, {names[3]}, {names[1]}, {names[2]}, {param_name}"
-        self.addCode(f'csinn_conv2d_init({name_series});\n')
+        self.code.append(f'csinn_conv2d_init({name_series});\n')
         self.exec_code.append(f'csinn_conv2d({name_series});\n')
 
+    def transpose(self, op):
+        # params
+        params = op["attributes"]
+        param_name = "line_" + str(op["file-line"]) + "_param"
+        permute_param = csinnParam("csinn_transpose_params",
+                                   param_name,
+                                   permute_num=len(params["order"]),
+                                   permute=params["order"])
+        self.code.append(permute_param.getDefinitionLine())
+        self.code += permute_param.getAttributeLines()
 
-def getShapeFromType(type: str):
+        # values
+        operands = op["operands"]
+        results = op["results"]
+        names = []
+        for value in (operands+results):
+            if not value:
+                continue
+            name = "value_" + value['name']
+            names.append(name)
+            if name in self.value_list:
+                continue
+            self.value_list.append(name)
+            shape = getShapeFromType(value["type"])
+            value_tensor = csinnTensor(name, shape, "CSINN_LAYOUT_NULL", 0, 1, "CSINN_DTYPE_FLOAT32")
+            self.code.append(value_tensor.getDefinitionLine())
+            self.code += value_tensor.getAttributeLines()
+        name_series = f"{names[0]}, {names[1]}, {param_name}"
+        self.code.append(f"csinn_transpose_init({name_series});\n")
+        self.exec_code.append(f"csinn_transpose({name_series});\n")
+
+    def pad(self, op):
+        # params
+        params = op["attributes"]
+        param_name = "line_" + str(op["file-line"]) + "_param"
+        pad_len = len(params["paddings"])
+        pad_param = csinnParam("csinn_pad_params",
+                               param_name,
+                               pad_value=params["val"],
+                               pad_mode="CSINN_PAD_CONSTANT",
+                               pad_before=params["paddings"][:pad_len // 2],
+                               pad_after=params["paddings"][pad_len // 2:])
+        self.code.append(pad_param.getDefinitionLine())
+        self.code += pad_param.getAttributeLines()
+
+        # values
+        operands = op["operands"]
+        results = op["results"]
+        names = []
+        for value in (operands+results):
+            if not value:
+                continue
+            name = "value_" + value['name']
+            names.append(name)
+            if name in self.value_list:
+                continue
+            self.value_list.append(name)
+            shape = getShapeFromType(value['type'])
+            value_tensor = csinnTensor(name, shape, "CSINN_LAYOUT_NULL", 0, 1, "CSINN_DTYPE_FLOAT32")
+            self.code.append(value_tensor.getDefinitionLine())
+            self.code += value_tensor.getAttributeLines()
+        name_series = f"{names[0]}, {names[1]}, {param_name}"
+        self.code.append(f"csinn_pad_init({name_series});\n")
+        self.exec_code.append(f"csinn_pad({name_series});\n")
+
+
+#####################################
+####          Utilities          ####
+#####################################
+def getShapeFromType(type: str) -> List[int]:
     ''' Get shape array from tensortype '''
     assert type[:7] == "tensor<"
     shape_str = type.split("<", 1)[-1].split(",")[0]
@@ -189,11 +314,8 @@ if __name__ == "__main__":
         mlir_line = mlir_file[line_idx - 1].strip()
         mlir_attr = mlir_line.split("{", 1)[-1].split("}", 1)[0]
         op["attributes"] = mlirAttr2kwargs(mlir_attr)
-    
+
     # generate model.c
     print("-"*20)
     model = genModel(json_file)
     model.emitC()
-
-    
-
